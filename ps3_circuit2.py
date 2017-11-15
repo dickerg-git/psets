@@ -345,16 +345,16 @@ class RangeIndex(object):
   def remove(self, key):
     """Removes a key from the range index."""
     print( "remove:  ", key)
-    print( self.bst_data.remove(key) )
+    #print( self.bst_data.remove(key) )
   
   def list(self, first_key, last_key):
     """List of values for the keys that fall within [first_key, last_key]."""
     kwp_list = []
     #while True:
-    #kwp_list = self.bst_data.inorder_list()
+    kwp_list = self.bst_data.inorder_list()
     #print("List:", len(kwp_list))
-    #return [key for key in  kwp_list if first_key <= key <= last_key]
-    return [key for key in self.data if first_key <= key <= last_key]
+    return [key for key in  kwp_list if first_key <= key <= last_key]
+    #return [key for key in self.data if first_key <= key <= last_key]
   
   def count(self, first_key, last_key):
     """Number of keys that fall within [first_key, last_key]."""
