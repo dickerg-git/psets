@@ -9,620 +9,617 @@ import sys    # Used to smooth over the range / xrange issue.
 if sys.version_info >= (3,):
     xrange = range
 
+# Circuit verification library.
 
-# Circuit simulation library.
-
-class TruthTable:
-    """Truth table representation of the logic inside a gate."""
-    
-    def __init__(self, name, output_list):
-        """Creates a truth table from a list representation.
-        
-        Args:
-            name: User-friendly name for the truth table.
-            output_list: The entries in the truth table, in the standard order
-                (the inputs should look like an incrementing counter).
-        
-        Raises:
-            TypeError: An exception if the list's length is not a power of two.
-        """
-        self.name = name
-        self.table = self._build_table(output_list)
-        self.input_count = self._table_depth(self.table)
-
-    def output(self, inputs):
-        """Computes the output for this truth table, given a list of inputs."""
-        if len(inputs) != self.input_count:
-            raise ValueError('Inputs list is incorrectly sized')
-        value = self.table
-        for i in inputs:
-            value = value[i]
-        return value
-
-    def _build_table(self, output_list):
-        # Builds an evaluation table out of a list of truth table values.
-        #
-        # Raises:
-        #    TypeError: An exception if the list's length is not a power of two.
-        if len(output_list) == 2:
-            for value in output_list:
-                if value != 0 and value != 1:
-                    raise TypeError('Invalid value in truth output list')
-            return output_list
-        else:
-            length = len(output_list)
-            if length % 2 != 0:
-                raise ValueError('Invalid truth output list length')
-            half = length // 2
-            return [self._build_table(output_list[0:half]),
-                    self._build_table(output_list[half:])]
-
-    def _table_depth(self, table):
-        # The depth (number of inputs) of a truth table.
-        depth = 0
-        while table != 0 and table != 1:
-            depth += 1
-            table = table[0]
-        return depth
-    
-class GateType:
-    """A type of gate, e.g. 2-input NAND with 60ps delay."""
-    
-    def __init__(self, name, truth_table, delay):
-        """Creates a gate type with a truth table and output delay.
-        
-        Args:
-            name: User-friendly name for the gate type.
-            truth_table: TruthTable instance containing the gate's logic.
-            delay: The time it takes an input transition to cause an output 
-                transition.
-        
-        Raises:
-            ValueError: An exception if the delay is negative.
-        """
-        self.name = name
-        if delay < 0:
-            raise ValueError('Invalid delay')
-        self.truth_table = truth_table
-        self.input_count = truth_table.input_count
-        self.delay = delay
-
-    def output(self, inputs):
-        """The gate's output value, given a list of inputs."""
-        return self.truth_table.output(inputs)
-    
-    def output_time(self, input_time):
-        """The time of the gate's output transition.
-        
-        Computes the time of the output transition given an input transition 
-        time.
-        
-        Args:
-            input_time: Time of the input transition.
-        """
-        return self.delay + input_time
-
-class Gate:
-    """A gate in a circuit."""
-
-    def __init__(self, name, gate_type):
-        """ Creates an unconnected gate whose initial output is false.
-        
-        Args:
-            name: User-friendly name for the gate.
-            gate_type: GateType instance specifying the gate's behavior.
-        """
-        self.name = name
-        self.gate_type = gate_type
-        self.in_gates = [None for i in xrange(gate_type.input_count)]
-        self.out_gates = []
-        self.probed = False
-        self.output = 0
+class Wire(object):
+  """A wire in an on-chip circuit.
   
-    def connect_input(self, gate, terminal):
-        """Connects one of this gate's input terminals to another gate's output.
-        
-        Args:
-            gate: The gate whose output terminal will be connected.
-            terminal: The number of this gate's input terminal that will be 
-                connected (using 0-based indexing)
-        """
-        if self.in_gates[terminal] is not None:
-            raise RuntimeError('Input terminal already connected')
-        self.in_gates[terminal] = gate
-        gate.out_gates.append(self)
-      
-    def probe(self):
-        """Marks this gate as probed.
-        
-        So the simulator will record its transitions.
-        
-        Raises:
-            RuntimeError: An exception if the gate is already probed.
-        """
-        if self.probed:
-            raise RuntimeError('Gate already probed')
-        self.probed = True
-
-    def has_inputs_connected(self):
-        """True if all the gate's input terminals are connected to other gates.
-        """
-        for input in self.in_gates:
-            if input == None:
-                return False
-        return True
+  Wires are immutable, and are either horizontal or vertical.
+  """
   
-    def has_output_connected(self):
-        """True if the gate's output terminal is connected to another gate."""
-        return self.out_gates.length > 0
-  
-    def is_connected(self):
-        """True if all the gate's inputs and outputs are connected."""
-        return self.has_inputs_connected and self.has_output_connected
-
-    def transition_output(self):
-        """The value that the gate's output will have after transition.
-        
-        The gate's output will not reflect this value right away. Each gate has 
-        a delay from its inputs' transitions to the output's transition. The 
-        circuit simulator is responsible for setting the appropriate time. 
-        """
-        return self.gate_type.output([gate.output for gate in self.in_gates])
-  
-    def transition_time(self, input_time):
-        """The time that the gate's output will reflect a change in its inputs.
-        
-        Args:
-            input_time: The last time when the gate's inputs changed.
-        """
-        return self.gate_type.output_time(input_time)
+  def __init__(self, name, x1, y1, x2, y2):
+    """Creates a wire.
     
-    def as_json(self):
-        """"A hash that obeys the JSON format, representing the gate."""
-        return {'id': self.name, 'table': self.gate_type.truth_table.name,
-                'type': self.gate_type.name, 'probed': self.probed,
-                'inputs': [g and g.name for g in self.in_gates],
-        'outputs': [g and g.name for g in self.out_gates]}
-
-class Circuit:
-    """The topology of a combinational circuit, and a snapshot of its state.
+    Raises an ValueError if the coordinates don't make up a horizontal wire
+    or a vertical wire.
     
-    This class contains topological information about a circuit (how the gates 
-    are connected to each other) as well as information about the gates' states
-    (values at their output terminals) at an instance of time.
+    Args:
+      name: the wire's user-visible name
+      x1: the X coordinate of the wire's first endpoint
+      y1: the Y coordinate of the wire's first endpoint
+      x2: the X coordinate of the wire's last endpoint
+      y2: the Y coordinate of the wire's last endpoint
     """
-    def __init__(self):
-        """Creates an empty circuit."""
-        self.truth_tables = {}
-        self.gate_types = {}
-        self.gates = {}
-
-    def add_truth_table(self, name, output_list):
-        """Adds a truth table that can be later attached to gate types.
-        
-        Args:
-            name: A unique string used to identify the truth table.
-            output_list: A list of outputs for the truth table.
-        
-        Returns:
-            A newly created TruthTable instance.
-        """
-        if name in self.truth_tables:
-            raise ValueError('Truth table name already used')
-        self.truth_tables[name] = TruthTable(name, output_list)
+    # Normalize the coordinates.
+    if x1 > x2:
+      x1, x2 = x2, x1
+    if y1 > y2:
+      y1, y2 = y2, y1
     
-    def add_gate_type(self, name, truth_table_name, delay):
-        """Adds a gate type that can be later attached to gates.
-        
-        Args:
-            name: A unique string used to identify the gate type.
-            truth_table_name: The name of the gate's truth table.
-            delay: The gate's delay from an input transition to an output 
-                transition.
-        
-        Returns:
-            The newly created GateType instance.
-        """
-        if name in self.gate_types:
-            raise ValueError('Gate type name already used')
-        truth_table = self.truth_tables[truth_table_name]
-        if delay < 0:
-            raise ValueError('Invalid delay')
-        self.gate_types[name] = GateType(name, truth_table, delay)
+    self.name = name
+    self.x1, self.y1 = x1, y1
+    self.x2, self.y2 = x2, y2
+    self.object_id = Wire.next_object_id()
     
-    def add_gate(self, name, type_name, input_names):
-        """Adds a gate and connects it to other gates.
-        
-        Args:
-            name: A unique string used to identify the gate.
-            type_name: The name of the gate's type.
-            input_names: List of the names of gates whose outputs are connected 
-                to this gate's inputs.
-        
-        Returns:
-            The newly created Gate instance.
-        """
-        if name in self.gates:
-            raise ValueError('Gate name already used')
-        gate_type = self.gate_types[type_name]
-        self.gates[name] = new_gate = Gate(name, gate_type)
-        for i in xrange(len(input_names)):
-            gate = self.gates[input_names[i]]
-            new_gate.connect_input(gate, i)
-        return new_gate
-    
-    def add_probe(self, gate_name):
-        """Adds a gate to the list of outputs."""
-        gate = self.gates[gate_name]
-        gate.probe()
-      
-    def as_json(self):
-        """A hash that obeys the JSON format, representing the circuit."""
-        json = {}
-        json['gates'] = [gate.as_json() for gate in self.gates.itervalues()]
-        return json
-
-class Transition:
-    """A transition in a gate's output."""
+    if not (self.is_horizontal() or self.is_vertical()):
+      raise ValueError(str(self) + ' is neither horizontal nor vertical')
   
-    def __init__(self, gate, new_output, time):
-        """Creates a potential transition of a gate's output to a new value.
-        
-        Args:
-            gate: The Gate whose output might transition.
-            new_output: The new output value that the gate will take.
-            time: The time at which the Gate's output will match the new value.
-        
-        Raises:
-            ValueError: An exception if the output is not 0 or 1. 
-        """
-        if new_output != 0 and new_output != 1:
-            raise ValueError('Invalid output value')
-        self.gate = gate
-        self.new_output = new_output
-        self.time = time
-        self.object_id = Transition.next_object_id()
+  def is_horizontal(self):
+    """True if the wire's endpoints have the same Y coordinates."""
+    return self.y1 == self.y2
+  
+  def is_vertical(self):
+    """True if the wire's endpoints have the same X coordinates."""
+    return self.x1 == self.x2
+  
+  def intersects(self, other_wire):
+    """True if this wire intersects another wire."""
+    # NOTE: we assume that wires can only cross, but not overlap.
+    if self.is_horizontal() == other_wire.is_horizontal():
+      return False 
     
-    def __lt__(self, other):
-        # :nodoc: Transitions should be comparable.
-        return (self.time < other.time or
-                (self.time == other.time and self.object_id < other.object_id))
+    if self.is_horizontal():
+      h = self
+      v = other_wire
+    else:
+      h = other_wire
+      v = self
+    return v.y1 <= h.y1 and h.y1 <= v.y2 and h.x1 <= v.x1 and v.x1 <= h.x2
+  
+  def __repr__(self):
+    # :nodoc: nicer formatting to help with debugging
+    return('<wire ' + self.name + ' (' + str(self.x1) + ',' + str(self.y1) + 
+           ')-(' + str(self.x2) + ',' + str(self.y2) + ')>')
+  
+  def as_json(self):
+    """Dict that obeys the JSON format restrictions, representing the wire."""
+    return {'id': self.name, 'x': [self.x1, self.x2], 'y': [self.y1, self.y2]}
+
+  # Next number handed out by Wire.next_object_id()
+  _next_id = 0
+  
+  @staticmethod
+  def next_object_id():
+    """Returns a unique numerical ID to be used as a Wire's object_id."""
+    id = Wire._next_id
+    Wire._next_id += 1
+    return id
+
+class WireLayer(object):
+  """The layout of one layer of wires in a chip."""
+  
+  def __init__(self):
+    """Creates a layer layout with no wires."""
+    self.wires = {}
+  
+  def wires(self):
+    """The wires in the layout."""
+    self.wires.values()
+  
+  def add_wire(self, name, x1, y1, x2, y2):
+    """Adds a wire to a layer layout.
     
-    def __le__(self, other):
-        # :nodoc: Transitions should be comparable.
-        return (self.time < other.time or
-                (self.time == other.time and self.object_id <= other.object_id))
+    Args:
+      name: the wire's unique name
+      x1: the X coordinate of the wire's first endpoint
+      y1: the Y coordinate of the wire's first endpoint
+      x2: the X coordinate of the wire's last endpoint
+      y2: the Y coordinate of the wire's last endpoint
     
-    def __gt__(self, other):
-        # :nodoc: Transitions should be comparable.
-        return (self.time > other.time or
-                (self.time == other.time and self.object_id > other.object_id))
+    Raises an exception if the wire isn't perfectly horizontal (y1 = y2) or
+    perfectly vertical (x1 = x2)."""
+    if name in self.wires:
+        raise ValueError('Wire name ' + name + ' not unique')
+    self.wires[name] = Wire(name, x1, y1, x2, y2)
+  
+  def as_json(self):
+    """Dict that obeys the JSON format restrictions, representing the layout."""
+    return { 'wires': [wire.as_json() for wire in self.wires.values()] }
+  
+  @staticmethod
+  def from_file(file):
+    """Builds a wire layer layout by reading a textual description from a file.
     
-    def __ge__(self, other):
-        # :nodoc: Transitions should be comparable.
-        return (self.time > other.time or
-                (self.time == other.time and self.object_id >= other.object_id))
+    Args:
+      file: a File object supplying the input
     
-    # NOTE: Due to the comparisons' use of object_id, no two Transitions will be
-    #       equal. So we don't need to override __eq__, __ne__, or __hash__.
+    Returns a new Simulation instance."""
+
+    layer = WireLayer()
+    
+    while True:
+      command = file.readline().split()
+      if command[0] == 'wire':
+        coordinates = [float(token) for token in command[2:6]]
+        layer.add_wire(command[1], *coordinates)
+      elif command[0] == 'done':
+        break
       
-    def is_valid(self):
-        """True if the transition would cause an actual change in the gate's 
-        output.
-        """
-        return self.gate.output != self.new_output
-    
-    def apply(self):
-        """Makes this transition effective by changing the gate's output.
-        
-        Raises:
-            ValueError: An exception if applying the transition wouldn't cause 
-                an actual change in the gate's output.
-        """
-        if self.gate.output == self.new_output:
-            raise ValueError('Gate output should not transition to the same '
-                             'value')
-        self.gate.output = self.new_output
-    
-    def __repr__(self):
-        # :nodoc: debug output
-        return ('<Transition at t=' + str(self.time) + ', gate ' + 
-                self.gate.name + ' -> ' + str(self.new_output) + '>')
-    
-    # Next number handed out by Transition.next_object_id()
-    _next_id = 0
-    
-    @staticmethod
-    def next_object_id():
-        """Returns a unique numerical ID to be used as a Transition's object_id.  
-        """
-        id = Transition._next_id
-        Transition._next_id += 1
-        return id
+    return layer
 
-class PriorityQueue:
-    """Array-based priority queue implementation."""
-    def __init__(self):
-        """Initially empty priority queue."""
-        # This List puts root at element[1], unused element[0].
-        self.queue = [0]
-        self.min_index = None
-    
-    def __len__(self):
-        # Number of elements in the queue.
-        return len(self.queue) - 1
-    
-    def append(self, key):
-        """PUSH & Inserts an element in the priority queue."""
-        if key is None:
-            raise ValueError('Cannot insert None in the queue')
-        self.queue.append(key)
-        # Float UP the last item to Heapify the list...
-        self.__pushUp(len(self.queue) -1)
-    
-    def min(self):
-        """PEEK & Return the smallest element in the queue."""
-        if len(self.queue) == 1:
-            return None
-        # MIN is always element[1] of the list
-        # self._find_min()
-        return self.queue[1]
-    
-    def pop(self):
-        """POP & Removes the minimum element in the queue.
-    
-        Returns:
-            The value of the removed element.
-        """
-        if len(self.queue) == 1: # The queue is empty!
-            return None
-        elif len(self.queue) == 2: # The queue has one element[1], use built-in pop
-            popped_key = self.queue.pop(-1)
+
+
+
+class BST_Node_KWP:
+  """Model a node in the BST structure"""
+
+  def __init__(self,key):
+    """Initialize the BST Node structure"""
+    self.leftChild = None
+    self.rightChild = None
+    self.kwp_key = key
+    #self.kwp_index = []
+
+  def insert(self,kwp):
+    """Insert a KWP into the Binary Tree structure."""
+    new_data = kwp.wire.y1
+
+    #Make sure the not is not a duplicate by using unique wire id field.
+    if self.kwp_key == kwp:
+        print("Dup:", self.kwp_key)
+        return False
+
+    # See if the new value goes into the Left subtree...
+    elif self.kwp_key > kwp:
+        if self.leftChild:
+          return self.leftChild.insert(kwp)
         else:
-        # swap the element[1] with the end of the list
-            self.__swap( 1, len(self.queue) -1 )
-            popped_key = self.queue.pop(-1)
-        # Float DOWN the first to Heapify the List...
-            self.__popDown(1)
-        return popped_key
+          self.leftChild = BST_Node_KWP(kwp)
+          print("Inserted left:", self.leftChild.kwp_key)
+          return True
 
-    def __swap(self, index, end):
-        # Swap the List item with the end element
-        self.queue[index], self.queue[end] = self.queue[end], self.queue[index]
+    # Insert into the Right subtree.
+    else:
+        if self.rightChild:
+          return self.rightChild.insert(kwp)
+        else:
+          self.rightChild = BST_Node_KWP(kwp)
+          print("Inserted right:", self.rightChild.kwp_key)
+          return True
 
-    def __pushUp(self, index):
-        # Push the minimum element to its highest position
-        parent = index//2
-        if index <= 1:
-            return
-        elif self.queue[index] < self.queue[parent]:
-            self.__swap(index, parent)
-            self.__pushUp(parent)
 
-    def __popDown(self,index):
-        # Pop the element to its lowest position
-        left  = index * 2
-        right = left + 1
-        min = index
-        if len(self.queue) > left and self.queue[min] > self.queue[left]:
-            min = left
-        if len(self.queue) > right and self.queue[min] > self.queue[right]:
-            min = right
-        if min != index:
-            self.__swap(index, min)
-            self.__popDown(min)
+  def bst_search(self, kwp):
+    """Search the BST structure to find the node matching the sweep position.
+       RETURNS: kwp_index, List of kwp items.
+    """
+    #print("bst_search:", kwp.wire.y1)
+    if self.kwp_key == kwp:
+           #print("Case 1")
+           return self.kwp_key
 
-    def _find_min(self):
-        # Computes the index of the minimum element in the queue.
-        # This is O(n)!!!
-        # This method may crash if called when the queue is empty.
-        if self.min_index is not None:
-            return
-        min = self.queue[0]
-        self.min_index = 0
-        for i in xrange(1, len(self.queue)):
-            key = self.queue[i]
-            if key < min:
-                min = key
-                self.min_index = i
+    elif self.kwp_key > kwp:
+        if self.leftChild:
+           #print("Case L")
+           return self.leftChild.bst_search(kwp)
+#        else:
+#          return self.kwp_index
 
-class Simulation:
-    """State needed to compute a circuit's state as it evolves over time."""
+    else:
+        if self.rightChild:
+           #print("Case R")
+           return self.rightChild.bst_search(kwp)
+#        else:
+#          return self.kwp_index
+
+  def node_list(self):
+      nodes = list()
+
+      if self.leftChild:
+          nodes.extend(self.leftChild.node_list())
+      nodes.append(self.kwp_key)
+      if self.rightChild:
+          nodes.extend(self.rightChild.node_list())
+      return nodes
+
+
+class BSTree(object):
+  """Binary Search Tree implementation."""
+
+  def __init__(self):
+    """Initialize the BST structure"""
+    self.root = None
+
+  def insert(self, key):
+    """Insert a KeyWirePair object into a node
+       indexed to the mid-Y coordinate of a Horizontal wire.
+    """
+    if self.root:
+          return self.root.insert(key)
+    else:
+          self.root = BST_Node_KWP(key)
+          print("Inserted root:", self.root.kwp_key)
+          return True
+
+  def remove(self, kwp):
+    """Remove a node from the BST tree"""
+    parent = None
+    node = self.root
+    #print("Checking:", node.kwp_key)
+
+    while node and node.kwp_key != kwp:
+          parent = node
+          if kwp < node.kwp_key:
+             node = node.leftChild
+          else:
+             node = node.rightChild
+          #print("Following:", node.kwp_key)
+
+    if node is self.root:
+          print("removed ROOT!")
+    print("Removed: ", node.kwp_key)
+
+    #Case 1: The node value was not found!!!
+    if node is None or node.kwp_key != kwp:
+          return False
+
+    #case 2: The node has NO children
+    elif node.leftChild is None and node.rightChild is None:
+          if node is self.root:
+              self.root = None
+          elif kwp < parent.kwp_key:
+              parent.leftChild = None
+          else:
+              parent.rightChild = None
+          print("Removed, case 2")
+          return True
+
+    #Case 3, 4: The node has only ONE child node.
+    elif node.leftChild and node.rightChild is None:
+          if node is self.root:
+              self.root = node.leftChild
+          elif kwp < parent.kwp_key:
+              parent.leftChild = node.leftChild
+          else:
+              parent.rightChild = node.leftChild
+          print("Removed, case 3")
+          return True
+
+    elif node.leftChild is None and node.rightChild:
+          if node is self.root:
+              self.root = node.rightChild
+          elif kwp < parent.kwp_key:
+              parent.leftChild = node.rightChild
+          else:
+              parent.rightChild = node.rightChild
+          print("Removed, case 4")
+          return True
+
+    #Case 5: The node has TWO roots!
+    else:
+          delNodeParent = node
+          delNode = node.rightChild
+
+          #Find the lowest leftChild to find the next greater node.
+          while delNode.leftChild:
+              delNodeParent = delNode
+              delNode = delNode.leftChild
+          #Replace the deleted node value with the next greater node value
+          node.kwp_key = delNode.kwp_key
+
+          #Remove the Right Child
+          if delNode.rightChild:
+              if delNodeParent.kwp_key > delNode.kwp_key:
+                  delNodeParent.leftChild = delNode.rightChild
+              elif delNodeParent.kwp_key < delNode.kwp_key:
+                  delNodeParent.rightChild = delNode.rightChild
+              return True
+          #Remove the Left Child
+          else:
+              if delNode.kwp_key < delNodeParent.kwp_key:
+                  delNodeParent.leftChild = None
+              else:
+                  delNodeParent.rightChild = None
+              return True
+
+          print("Remove failed...")
+          return False
+
+  def findKey(self,kwp):
+    """Look into the BST for a node searching for the Y point of a H-wire."""
+
+    return self.root.bst_search(kwp)
+
+  def inorder_list(self):
+
+      if self.root:
+        return self.root.node_list()
+
+
+
+class RangeIndex(object):
+  """Array-based range index implementation."""
+  
+  def __init__(self):
+    """Initially empty range index."""
+    self.data = []
+    self.bst_data = BSTree()
+  
+  def add(self, key):
+    """Inserts a key in the range index."""
+    if key is None:
+        raise ValueError('Cannot insert nil in the index')
+    self.data.append(key)
+    self.bst_data.insert(key)
+    #print( key )
+  
+  def remove(self, key):
+    """Removes a key from the range index."""
+    print( "remove:  ", key)
+    #print( self.bst_data.remove(key) )
+  
+  def list(self, first_key, last_key):
+    """List of values for the keys that fall within [first_key, last_key]."""
+    kwp_list = []
+    #while True:
+    kwp_list = self.bst_data.inorder_list()
+    #print("List:", len(kwp_list))
+    return [key for key in  kwp_list if first_key <= key <= last_key]
+    #return [key for key in self.data if first_key <= key <= last_key]
+  
+  def count(self, first_key, last_key):
+    """Number of keys that fall within [first_key, last_key]."""
+    result = 0
+    for key in self.data:
+      if first_key <= key <= last_key:
+        result += 1
+    return result
+  
+class TracedRangeIndex(RangeIndex):
+  """Augments RangeIndex to build a trace for the visualizer."""
+  
+  def __init__(self, trace):
+    """Sets the object receiving tracing info."""
+    RangeIndex.__init__(self)
+    self.trace = trace
+  
+  def add(self, key):
+    self.trace.append({'type': 'add', 'id': key.wire.name})
+    RangeIndex.add(self, key)
+  
+  def remove(self, key):
+    self.trace.append({'type': 'delete', 'id': key.wire.name})
+    RangeIndex.remove(self, key)
+  
+  def list(self, first_key, last_key):
+    result = RangeIndex.list(self, first_key, last_key)
+    self.trace.append({'type': 'list', 'from': first_key.key,
+                       'to': last_key.key,
+                       'ids': [key.wire.name for key in result]}) 
+    return result
+  
+  def count(self, first_key, last_key):
+    result = RangeIndex.count(self, first_key, last_key)
+    self.trace.append({'type': 'list', 'from': first_key.key,
+                       'to': last_key.key, 'count': result})
+    return result
+
+class ResultSet(object):
+  """Records the result of the circuit verifier (pairs of crossing wires)."""
+  
+  def __init__(self):
+    """Creates an empty result set."""
+    self.crossings = []
+  
+  def add_crossing(self, wire1, wire2):
+    """Records the fact that two wires are crossing."""
+    self.crossings.append(sorted([wire1.name, wire2.name]))
+  
+  def write_to_file(self, file):
+    """Write the result to a file."""
+    for crossing in self.crossings:
+      file.write(' '.join(crossing))
+      file.write('\n')
+
+class TracedResultSet(ResultSet):
+  """Augments ResultSet to build a trace for the visualizer."""
+  
+  def __init__(self, trace):
+    """Sets the object receiving tracing info."""
+    ResultSet.__init__(self)
+    self.trace = trace
     
-    def __init__(self, circuit):
-        """Creates a simulation that will run on a pre-built circuit.
-        
-        The Circuit instance does not need to be completely built before it is 
-        given to the class constructor. However, it does need to be complete 
-        before the run method is called.
-        
-        Args:
-            circuit: The circuit whose state transitions will be simulated.
-        """
-        self.circuit = circuit
-        self.in_transitions = []
-        
-        self.queue = PriorityQueue()
-        self.probes = []
-        self.probe_all_undo_log = []
+  def add_crossing(self, wire1, wire2):
+    self.trace.append({'type': 'crossing', 'id1': wire1.name,
+                       'id2': wire2.name})
+    ResultSet.add_crossing(self, wire1, wire2)
 
-    def add_transition(self, gate_name, output_value, output_time):
-        """Adds a transition to the simulation's initial conditions.
-        
-        The transition should involve one of the circuit's input gates.
-        """
-        gate = self.circuit.gates[gate_name]
-        self.in_transitions.append([output_time, gate_name, output_value, gate])
-    
-    def step(self):
-        """Runs the simulation for one time slice.
-        
-        A step does not equal one unit of time. The simulation logic ignores 
-        time units where nothing happens, and bundles all the transitions that 
-        happen at the same time in a single step.
-        
-        Returns:
-            The simulation time after the step occurred.
-        """ 
-        step_time = self.queue.min().time
-        #print(step_time)
-        # Need to apply all the transitions at the same time before propagating.
-        transitions = []
-        while len(self.queue) > 0 and self.queue.min().time == step_time:
-          transition = self.queue.pop()
-          if not transition.is_valid():
-            continue
-          transition.apply()
-          if transition.gate.probed:
-            self.probes.append([transition.time, transition.gate.name,
-                                transition.new_output])
-          transitions.append(transition)
-        
-        # Propagate the transition effects.
-        for transition in transitions:
-          for gate in transition.gate.out_gates:
-            output = gate.transition_output()
-            time = gate.transition_time(step_time)
-            self.queue.append(Transition(gate, output, time))
-        
-        return step_time
-    
-    def run(self):
-        """Runs the simulation to completion."""
-        for in_transition in sorted(self.in_transitions):
-            self.queue.append(Transition(in_transition[3], in_transition[2],
-                                         in_transition[0]))
-        while len(self.queue) > 0:
-            self.step()
-        self.probes.sort()
-            
-    def probe_all_gates(self):
-        """Turns on probing for all gates in the simulation."""
-        for gate in self.circuit.gates.itervalues():
-            if not gate.probed:
-                self.probe_all_undo_log.append(gate)
-                gate.probe()
+class KeyWirePair(object):
+  """Wraps a wire and the key representing it in the range index.
+  
+  Once created, a key-wire pair is immutable."""
+  
+  def __init__(self, key, wire):
+    """Creates a new key for insertion in the range index."""
+    self.key = key
+    if wire is None:
+      raise ValueError('Use KeyWirePairL or KeyWirePairH for queries')
+    self.wire = wire
+    self.wire_id = wire.object_id
 
-    def undo_probe_all_gates(self):
-        """Reverts the effects of calling probe_all_gates!"""  
-        for gate in self.probe_all_undo_log:
-            gate.probed = False
-        self.probe_all_undo_log = []
-    
-    @staticmethod
-    def from_file(file):
-        """Builds a simulation by reading a textual description from a file.
-        
-        Args:
-            file: A File object supplying the input.
-        
-        Returns: A new Simulation instance.
-        """
-        circuit = Circuit()
-        simulation = Simulation(circuit)
+  def __lt__(self, other):
+    # :nodoc: Delegate comparison to keys.
+    return (self.key < other.key or
+            (self.key == other.key and self.wire_id < other.wire_id))
+  
+  def __le__(self, other):
+    # :nodoc: Delegate comparison to keys.
+    return (self.key < other.key or
+            (self.key == other.key and self.wire_id <= other.wire_id))  
 
-        while True:
-            #print("Get a file line...")
-            command = file.readline().split()
+  def __gt__(self, other):
+    # :nodoc: Delegate comparison to keys.
+    return (self.key > other.key or
+            (self.key == other.key and self.wire_id > other.wire_id))
+  
+  def __ge__(self, other):
+    # :nodoc: Delegate comparison to keys.
+    return (self.key > other.key or
+            (self.key == other.key and self.wire_id >= other.wire_id))
 
-            if len(command) < 1:
-                continue
-            #print(command[0])
-            if command[0] == 'table':
-                outputs = [int(token) for token in command[2:]]
-                circuit.add_truth_table(command[1], outputs)
-            elif command[0] == 'type':
-                if len(command) != 4:
-                    raise ValueError('Invalid number of arguments for gate type'
-                                     ' command')
-                circuit.add_gate_type(command[1], command[2], int(command[3]))
-            elif command[0] == 'gate':
-                circuit.add_gate(command[1], command[2], command[3:])
-            elif command[0] == 'probe':
-                if len(command) != 2:
-                    raise ValueError('Invalid number of arguments for gate '
-                                      'probe command')
-                circuit.add_probe(command[1])
-            elif command[0] == 'flip':
-                if len(command) != 4:
-                    raise ValueError('Invalid number of arguments for flip '
-                                     'command')
-                simulation.add_transition(command[1], int(command[2]), 
-                                          int(command[3]))
-            elif command[0] == 'done':
-                break
-        return simulation
+  def __eq__(self, other):
+    # :nodoc: Delegate comparison to keys.
+    return self.key == other.key and self.wire_id == other.wire_id
+  
+  def __ne__(self, other):
+    # :nodoc: Delegate comparison to keys.
+    return self.key != other.key or self.wire_id != other.wire_id
+
+  def __hash__(self):
+    # :nodoc: Delegate comparison to keys.
+    return hash([self.key, self.wire_id])
+
+  def __repr__(self):
+    # :nodoc: nicer formatting to help with debugging
+    return '<key: ' + str(self.key) + ' wire: ' + str(self.wire) + '>'
+
+class KeyWirePairL(KeyWirePair):
+  """A KeyWirePair that is used as the low end of a range query.
+  
+  This KeyWirePair is smaller than all other KeyWirePairs with the same key."""
+  def __init__(self, key):
+    self.key = key
+    self.wire = None
+    self.wire_id = -1000000000
+
+class KeyWirePairH(KeyWirePair):
+  """A KeyWirePair that is used as the high end of a range query.
+  
+  This KeyWirePair is larger than all other KeyWirePairs with the same key."""
+  def __init__(self, key):
+    self.key = key
+    self.wire = None
+    # HACK(pwnall): assuming 1 billion objects won't fit into RAM.
+    self.wire_id = 1000000000
+
+class CrossVerifier(object):
+  """Checks whether a wire network has any crossing wires."""
+  
+  def __init__(self, layer):
+    """Verifier for a layer of wires.
     
-    def layout_from_file(self, file):
-        """Reads the simulation's visual layout from a file.
-        
-        Args:
-            file: A File-like object supplying the input.
-        
-        Returns:
-             self.
-        """
-        while True:
-          line = file.readline()
-          if len(line) == 0:
-              raise ValueError('Input lacks circuit layout information')
-          if line.strip() == 'layout':
-              svg = file.read()
-              # Get rid of the XML doctype.
-              svg = re.sub('\\<\\?xml.*\\?\\>', '', svg)
-              svg = re.sub('\\<\\!DOCTYPE[^>]*\\>', '', svg)
-              self.layout_svg = svg.strip()
-              break
-        self
+    Once created, the verifier can list the crossings between wires (the 
+    wire_crossings method) or count the crossings (count_crossings)."""
+
+    self.events = []
+    self._events_from_layer(layer)
+    self.events.sort()
+    if len(self.events) < 10:
+       for w in self.events:
+          print(w)
+
+    self.index = RangeIndex()
+    self.result_set = ResultSet()
+    self.performed = False
+  
+  def count_crossings(self):
+    """Returns the number of pairs of wires that cross each other."""
+    if self.performed:
+      raise 
+    self.performed = True
+    return self._compute_crossings(True)
+
+  def wire_crossings(self):
+    """An array of pairs of wires that cross each other."""
+    if self.performed:
+      raise 
+    self.performed = True
+    return self._compute_crossings(False)
+
+  def _events_from_layer(self, layer):
+    """Populates the sweep line events from the wire layer."""
+    left_edge = min([wire.x1 for wire in layer.wires.values()])
+    for wire in layer.wires.values():
+      if wire.is_horizontal():
+        #if wire.x1 > left_edge: left_edge = wire.x1
+        left_edge = wire.x1
+        self.events.append([left_edge, 0, wire.object_id, 'add', wire])
+        self.events.append([wire.x2, 2, wire.object_id, 'delete', wire])
+      else:
+        self.events.append([wire.x1, 1, wire.object_id, 'query', wire])
+
+  def _compute_crossings(self, count_only):
+    """Implements count_crossings and wire_crossings.
+       Ordered by: internal time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+187590314  222.183    0.000  343.936    0.000 circuit2.py:55(intersects)
+    20000  141.616    0.007  284.753    0.014 circuit2.py:157(list)
+562840882  121.779    0.000  121.779    0.000 circuit2.py:47(is_horizontal)
+        1   92.105   92.105  726.545  726.545 circuit2.py:336(_compute_crossings)
+299400000   84.416    0.000   84.416    0.000 circuit2.py:246(__le__)
+261444830   58.721    0.000   58.721    0.000 circuit2.py:256(__ge__)
+124719049    5.666    0.000    5.666    0.000 {method 'append' of 'list' objects}
+        1    0.126    0.126    0.335    0.335 circuit2.py:119(from_file)
+    34970    0.088    0.000    0.126    0.000 circuit2.py:20(__init__)
+        1    0.064    0.064    0.084    0.084 circuit2.py:327(_events_from_layer)
+
+    """
+    if count_only:
+      result = 0
+    else:
+      result = self.result_set
+
+    for event in self.events:
+      event_x, event_type, wire = event[0], event[3], event[4]
+      print(event_type, event_x, wire.x1, wire.name)
+
+      if event_type == 'add':
+        self.index.add(KeyWirePair(wire.y1, wire))
+      elif event_type == 'delete':
+        self.index.remove(KeyWirePair(wire.y1, wire))
+      elif event_type == 'query':
+        self.trace_sweep_line(event_x)
+        cross_wires = []
+        for kwp in self.index.list(KeyWirePairL(wire.y1),KeyWirePairH(wire.y2)):
+          if wire.intersects(kwp.wire):
+            cross_wires.append(kwp.wire)
+        if count_only:
+          result += len(cross_wires)
+        else:
+          for cross_wire in cross_wires:
+            result.add_crossing(wire, cross_wire)
+
+    return result
+  
+  def trace_sweep_line(self, x):
+    """When tracing is enabled, adds info about where the sweep line is.
     
-    def trace_as_json(self):
-        """A hash that obeys the JSON format, containing simulation data."""
-        return {'circuit': self.circuit.as_json(), 'trace': self.probes,
-                'layout': self.layout_svg}
+    Args:
+      x: the coordinate of the vertical sweep line
+    """
+    # NOTE: this is overridden in TracedCrossVerifier
+    pass
+
+class TracedCrossVerifier(CrossVerifier):
+  """Augments CrossVerifier to build a trace for the visualizer."""
+  
+  def __init__(self, layer):
+    CrossVerifier.__init__(self, layer)
+    self.trace = []
+    self.index = TracedRangeIndex(self.trace)
+    self.result_set = TracedResultSet(self.trace)
     
-    def outputs_to_line_list(self):
-        return [' '.join([str(probe[0]), probe[1], str(probe[2])]) for probe in self.probes]
+  def trace_sweep_line(self, x):
+    self.trace.append({'type': 'sweep', 'x': x})
     
-    def outputs_to_file(self, file):
-        """Writes a textual description of the simulation's probe results to a 
-        file.
-        
-        Args:
-            file: A File object that receives the probe results.
-        """
-        for line in self.outputs_to_line_list():
-            file.write(line)
-            file.write("\n")
-            
-    def jsonp_to_file(self, file):
-        """Writes a JSONP description of the simulation's probe results to a 
-        file.
-        
-        Args:
-            file: A File object that receives the probe results.
-        """
-        file.write('onJsonp(')
-        json.dump(self.trace_as_json(), file)
-        file.write(');\n')
+  def trace_as_json(self):
+    """List that obeys the JSON format restrictions with the verifier trace."""
+    return self.trace
 
 # Command-line controller.
 if __name__ == '__main__':
     import sys
-
-    print( "Using the circuit.in file ",sys.argv[1] )
-    file_in = open(sys.argv[1], 'r' )
-    if sys.argv[2]:
-       file_out = open(sys.argv[2], 'w' )
-
-    #sim = Simulation.from_file(sys.stdin)
-    sim = Simulation.from_file(file_in) #sys.stdin)
+    layer = WireLayer.from_file(sys.stdin)
+    verifier = CrossVerifier(layer)
+    
     if os.environ.get('TRACE') == 'jsonp':
-        sim.layout_from_file(sys.stdin)
-        sim.probe_all_gates()
-    sim.run()
-    if os.environ.get('TRACE') == 'jsonp':
-        sim.undo_probe_all_gates()
-        sim.jsonp_to_file(sys.stdout)
+      verifier = TracedCrossVerifier(layer)
+      result = verifier.wire_crossings()
+      json_obj = {'layer': layer.as_json(), 'trace': verifier.trace_as_json()}
+      sys.stdout.write('onJsonp(')
+      json.dump(json_obj, sys.stdout)
+      sys.stdout.write(');\n')
+    elif os.environ.get('TRACE') == 'list':
+      verifier.wire_crossings().write_to_file(sys.stdout)
     else:
-        #sim.outputs_to_file(sys.stdout)
-        sim.outputs_to_file(file_out)
+      sys.stdout.write(str(verifier.count_crossings()) + " Crosses!!!\n")
