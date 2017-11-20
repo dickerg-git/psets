@@ -165,7 +165,7 @@ class BST_Node_KWP:
           return self.leftChild.insert(kwp)
         else:
           self.leftChild = BST_Node_KWP(kwp)
-          print("Inserted left:", self.leftChild.kwp_key)
+          #print("Inserted left:", self.leftChild.kwp_key)
           return True
 
     # Insert into the Right subtree.
@@ -174,7 +174,7 @@ class BST_Node_KWP:
           return self.rightChild.insert(kwp)
         else:
           self.rightChild = BST_Node_KWP(kwp)
-          print("Inserted right:", self.rightChild.kwp_key)
+          #print("Inserted right:", self.rightChild.kwp_key)
           return True
 
 
@@ -227,7 +227,7 @@ class BSTree(object):
           return self.root.insert(key)
     else:
           self.root = BST_Node_KWP(key)
-          print("Inserted root:", self.root.kwp_key)
+          #print("Inserted root:", self.root.kwp_key)
           return True
 
   def remove(self, kwp):
@@ -236,20 +236,22 @@ class BSTree(object):
     node = self.root
     #print("Checking:", node.kwp_key)
 
-    while node and node.kwp_key != kwp:
+    if node.kwp_key == kwp:
+          print("removed ROOT!")
+    else:
+       while node and node.kwp_key != kwp:
           parent = node
           if kwp < node.kwp_key:
              node = node.leftChild
-          else:
+          elif kwp > node.kwp_key:
              node = node.rightChild
           #print("Following:", node.kwp_key)
 
-    if node is self.root:
-          print("removed ROOT!")
-    print("Removed: ", node.kwp_key)
+    print("Removing: ", node.kwp_key)
 
     #Case 1: The node value was not found!!!
     if node is None or node.kwp_key != kwp:
+          print("Problem: ", node.kwp_key)
           return False
 
     #case 2: The node has NO children
@@ -284,24 +286,32 @@ class BSTree(object):
           print("Removed, case 4")
           return True
 
-    #Case 5: The node has TWO roots!
+    #Case 5: The node has TWO children!
     else:
           delNodeParent = node
           delNode = node.rightChild
+          print("delNodeParent:", delNodeParent.kwp_key)
 
           #Find the lowest leftChild to find the next greater node.
           while delNode.leftChild:
               delNodeParent = delNode
               delNode = delNode.leftChild
+
           #Replace the deleted node value with the next greater node value
           node.kwp_key = delNode.kwp_key
+          print("delNode: ", delNode.kwp_key)
 
           #Remove the Right Child
           if delNode.rightChild:
+              print("delNodeParent:", delNodeParent.kwp_key)
               if delNodeParent.kwp_key > delNode.kwp_key:
                   delNodeParent.leftChild = delNode.rightChild
-              elif delNodeParent.kwp_key < delNode.kwp_key:
-                  delNodeParent.rightChild = delNode.rightChild
+              elif delNodeParent.kwp_key <= delNode.kwp_key: ### Should be just <, bug elsewhere??? ###
+                  print("Update R")
+                  delNodeParent.rightChild = delNode.rightChild ### Is the _gt_ method correct? ###
+              else:
+                  print("Remove ERROR")
+                  return False
               return True
           #Remove the Left Child
           else:
@@ -338,23 +348,21 @@ class RangeIndex(object):
     """Inserts a key in the range index."""
     if key is None:
         raise ValueError('Cannot insert nil in the index')
-    self.data.append(key)
+    #old-List: self.data.append(key)
     self.bst_data.insert(key)
     #print( key )
   
   def remove(self, key):
     """Removes a key from the range index."""
-    print( "remove:  ", key)
-    #print( self.bst_data.remove(key) )
+    #print( "remove:  ", key)
+    print( self.bst_data.remove(key) )
   
   def list(self, first_key, last_key):
     """List of values for the keys that fall within [first_key, last_key]."""
-    kwp_list = []
-    #while True:
     kwp_list = self.bst_data.inorder_list()
     #print("List:", len(kwp_list))
     return [key for key in  kwp_list if first_key <= key <= last_key]
-    #return [key for key in self.data if first_key <= key <= last_key]
+    #old-List: return [key for key in self.data if first_key <= key <= last_key]
   
   def count(self, first_key, last_key):
     """Number of keys that fall within [first_key, last_key]."""
